@@ -3,10 +3,11 @@
     "packages/*"
   ],
   "version": "independent",
-  "registry": "https://registry.npmjs.org",
+  "registry": "https://artifactoryspb.epam.com/artifactory/api/npm/epm-eag-npm/",
+
   "command": {
     "version": {
-      "allowBranch": ["main", "4.x", "release", "release/*"],
+      "allowBranch": ["main", "4.x", "release*", "feat*", "fix*"],
       "conventionalCommits": true,
       "message": "chore(release): publish",
       "changelogPreset": "conventionalcommits",

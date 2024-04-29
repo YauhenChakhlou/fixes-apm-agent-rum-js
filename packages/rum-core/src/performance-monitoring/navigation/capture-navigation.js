@@ -35,7 +35,8 @@ import { createUserTimingSpans } from './user-timing'
 import { createResourceTimingSpans } from './resource-timing'
 import { getPageLoadMarks } from './marks'
 
-function captureNavigation(transaction) {
+// DPEO: Added configService as an additional parameter
+function captureNavigation(transaction, configService) {
   /**
    * Do not capture timing related information when the
    * flag is set to false, By default both page-load and route-change
@@ -111,7 +112,8 @@ function captureNavigation(transaction) {
       resourceEntries,
       state.bootstrapTime,
       trStart,
-      trEnd
+      trEnd,
+      configService
     ).forEach(span => transaction.spans.push(span))
 
     /**

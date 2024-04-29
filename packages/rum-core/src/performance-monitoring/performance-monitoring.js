@@ -30,7 +30,9 @@ import {
   getDtHeaderValue,
   getTSHeaderValue,
   stripQueryStringFromUrl,
-  setRequestHeader
+  setRequestHeader,
+  shouldResourceBeExcludedFromTracking,
+  addCloudflareHeadersToSpan
 } from '../common/utils'
 import { Url } from '../common/url'
 import { patchEventHandler } from '../common/patching'
@@ -221,6 +223,13 @@ export default class PerformanceMonitoring {
       }
     }
 
+    // DPEO: LCP
+    if (task.data && task.data.url) {
+      if (shouldResourceBeExcludedFromTracking(task.data.url, configService)) {
+        return
+      }
+    }
+
     if (event === SCHEDULE && task.data) {
       const data = task.data
       const requestUrl = new Url(data.url)
@@ -296,6 +305,10 @@ export default class PerformanceMonitoring {
           outcome = OUTCOME_UNKNOWN
         }
         span.outcome = outcome
+
+        // DPEO: Save custom Cloudflare Response headers to span labels
+        addCloudflareHeadersToSpan(span, target, response)
+
         const tr = transactionService.getCurrentTransaction()
         if (tr && tr.type === HTTP_REQUEST_TYPE) {
           tr.outcome = outcome

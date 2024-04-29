@@ -37,7 +37,10 @@ import {
   getLatestNonXHRSpan,
   getLatestXHRSpan,
   isPerfTypeSupported,
-  generateRandomId
+  generateRandomId,
+  getTimeBeforeFetch,
+  getAllXhrSpans,
+  removeTimeFromSpans
 } from '../common/utils'
 import { captureNavigation } from './navigation/capture-navigation'
 import {
@@ -54,6 +57,7 @@ import {
   TRUNCATED_TYPE,
   FIRST_INPUT,
   LAYOUT_SHIFT,
+  ELEMENT_TIMING,
   SESSION_TIMEOUT,
   PAGE_LOAD_DELAY
 } from '../common/constants'
@@ -168,6 +172,7 @@ class TransactionService {
         this.recorder.start(PAINT)
         this.recorder.start(FIRST_INPUT)
         this.recorder.start(LAYOUT_SHIFT)
+        this.recorder.start(ELEMENT_TIMING)
       }
       if (perfOptions.pageLoadTraceId) {
         tr.traceId = perfOptions.pageLoadTraceId
@@ -323,7 +328,8 @@ class TransactionService {
           tr.name = slugifyUrl(currentUrl)
         }
 
-        captureNavigation(tr)
+        // DPEO: Added configService as an additional parameter
+        captureNavigation(tr, this._config)
 
         /**
          * Adjust transaction start time with span timings and
@@ -411,21 +417,101 @@ class TransactionService {
     const latestSpan = getLatestNonXHRSpan(spans) || {}
     const latestSpanEnd = latestSpan._end || 0
 
+    /**
+     * DPEO: Redirect
+     */
+    const timeBeforeFetch = getTimeBeforeFetch()
+
+    const allXhrSpans = getAllXhrSpans(spans)
+    if (allXhrSpans.length) {
+      // console.log(`All XHR spans of the transaction: ${transaction.id}`)
+      // console.table(allXhrSpans)
+      removeTimeFromSpans(allXhrSpans, timeBeforeFetch)
+      // console.log(`Adjusted XHR spans of the transaction: ${transaction.id}`)
+      // console.table(allXhrSpans)
+    }
+    /**
+     * DPEO: LCP
+     *  Configurable page load delay for sending metrics
+     */
+    const customPageLoadDelay = this._config.get('customPageLoadDelay')
+    const sendPageLoadMetricsDelay =
+      customPageLoadDelay && customPageLoadDelay !== PAGE_LOAD_DELAY
+        ? customPageLoadDelay
+        : PAGE_LOAD_DELAY
+
     // Before ending the page-load transaction we are adding a delay to monitor events such as LCP and network requests.
     // We need to make sure that we are not adding that extra time to the transaction end time
     // if nothing has been monitored or if the last monitored event end time is less than the delay.
     if (transaction.type === PAGE_LOAD) {
-      const transactionEndWithoutDelay = transaction._end - PAGE_LOAD_DELAY
+      const transactionEndWithoutDelay =
+        transaction._end - sendPageLoadMetricsDelay - timeBeforeFetch
+
       const lcp = metrics.lcp || 0
+      /**
+       * temporary disabling the inclusion of anything except the LCP
+       * during the "PAGE_LOAD_DELAY" of the transaction
+       * so the transaction will not be extended beyond its real time OR LCP
+       */
       const latestXHRSpan = getLatestXHRSpan(spans) || {}
       const latestXHRSpanEnd = latestXHRSpan._end || 0
 
-      transaction._end = Math.max(
-        latestSpanEnd,
+      let transactionEnd = Math.max(
+        // latestSpanEnd, // DPEO: LCP
         latestXHRSpanEnd,
         lcp,
         transactionEndWithoutDelay
       )
+
+      if (transactionEnd === lcp) {
+        transactionEnd += 50 // DPEO: LCP - for better visibility of right margin only
+      }
+
+      transaction.addMarks({
+        agent: {
+          removedRedirectTime: timeBeforeFetch
+        }
+      })
+
+      // if (__DEV__) {
+      //   this._logger.debug(
+      //     `Transaction END selected and set to: ${transactionEnd}ms`
+      //   )
+      //   this._logger.debug(
+      //     `LCP: ${lcp}, XHR: ${latestXHRSpanEnd}, TRnoDelay: ${transactionEndWithoutDelay}`
+      //   )
+      // }
+
+      this._config.addLabels({
+        isCustomLcpApiUsed: !!metrics.elemTimingLcp
+      })
+
+      if (metrics.customLcpElementXPath) {
+        this._config.addLabels({
+          customLcpElementXPath: metrics.customLcpElementXPath
+        })
+      }
+
+      if (metrics.nativeBrowserLcp) {
+        transaction.addMarks({
+          agent: {
+            nativeBrowserLcp: metrics.nativeBrowserLcp
+          }
+        })
+        this._config.addLabels({
+          nativeBrowserLcpElementXPath: metrics.nativeBrowserLcpElementXPath
+        })
+      }
+
+      if (__DEV__) {
+        this._config.addLabels({
+          trEndVariants: `LCP: ${lcp}, XHR: ${Math.ceil(
+            latestXHRSpanEnd
+          )}, TRnoDelay: ${Math.ceil(transactionEndWithoutDelay)}`
+        })
+      }
+
+      transaction._end = transactionEnd
     } else if (latestSpanEnd > transaction._end) {
       /**
        * Adjust end time of the transaction to match the span end value

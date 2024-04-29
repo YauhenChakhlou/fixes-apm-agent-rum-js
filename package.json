@@ -30,7 +30,8 @@
     "ci:prepare-release": "node ./scripts/ci-prepare-release.js",
     "ci:pre-release": "node ./scripts/ci-pre-release.mjs",
     "ci:release": "node ./scripts/ci-release.mjs",
-    "ci:post-release": "node ./scripts/ci-post-release.mjs"
+    "ci:post-release": "node ./scripts/ci-post-release.mjs",
+    "dpeo:publish": "lerna publish from-package --exact --no-push --no-git-tag-version --no-changelog"
   },
   "lint-staged": {
     "*.{js,jsx,ts}": [

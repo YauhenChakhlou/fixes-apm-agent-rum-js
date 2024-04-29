@@ -72,7 +72,7 @@ export default class ApmBase {
       /**
        * Set Agent version to be sent as part of metadata to the APM Server
        */
-      configService.setVersion('5.16.0')
+      configService.setVersion('105.16.1')
       this.config(config)
       /**
        * Set level here to account for both active and inactive cases
@@ -194,13 +194,26 @@ export default class ApmBase {
 
     tr.addTask(PAGE_LOAD)
     const sendPageLoadMetrics = () => {
+      /**
+       * DPEO: LCP
+       * Configurable page load delay for sending metrics
+       */
+      const configService = this.serviceFactory.getService(CONFIG_SERVICE)
+      const customPageLoadDelay = configService.get('customPageLoadDelay')
+      const sendPageLoadMetricsDelay =
+        customPageLoadDelay && customPageLoadDelay !== PAGE_LOAD_DELAY
+          ? customPageLoadDelay
+          : PAGE_LOAD_DELAY
+
       // The reasons of this timeout are:
       // 1. to make sure PerformanceTiming.loadEventEnd has a value.
       // 2. to make sure the agent intercepts all the LCP entries triggered by the browser (adding a delay in the timeout).
       // The browser might need more time after the pageload event to render other elements (e.g. images).
       // That's important because a LCP is only triggered when the related element is completely rendered.
       // https://w3c.github.io/largest-contentful-paint/#sec-add-lcp-entry
-      setTimeout(() => tr.removeTask(PAGE_LOAD), PAGE_LOAD_DELAY)
+      setTimeout(() => {
+        tr.removeTask(PAGE_LOAD)
+      }, sendPageLoadMetricsDelay)
     }
 
     if (document.readyState === 'complete') {
@@ -326,5 +339,45 @@ export default class ApmBase {
   addFilter(fn) {
     var configService = this.serviceFactory.getService(CONFIG_SERVICE)
     configService.addFilter(fn)
+  }
+
+  /**
+   * User-set callback, that is used on every API call and Resource download
+   * to check, if such call/resource should be skipped from be tracked as span
+   * @callback resourceExclusionCb
+   * @param {string} url - Url to verify for exclusion
+   * @returns {boolean} - Returns true, if the url should be excluded
+   */
+
+  /**
+   * Sets a specific callback, that is used on every API call and Resource download
+   * to check, if such call/resource should be skipped from be tracked as span
+   * @param {resourceExclusionCb} cb - The callback that handles the verification of the url
+   */
+  setHttpResourceExclusionFilter(cb) {
+    if (typeof cb !== 'function') {
+      return
+    }
+
+    const configService = this.serviceFactory.getService(CONFIG_SERVICE)
+    configService.setHttpResourceExclusionFilter(cb)
+  }
+
+  /**
+   * Sets a list of strings, that is used on every API call and Resource download
+   * to check, if such call/resource should be skipped from be tracked as span.
+   * String comparison is performed as a simple String.includes()
+   * @param {Array.<string>} excludedUrlParts
+   */
+  setHttpResourceExclusionList(excludedUrlParts) {
+    if (
+      !Array.isArray(excludedUrlParts) ||
+      excludedUrlParts.some(el => typeof el !== 'string')
+    ) {
+      return
+    }
+
+    const configService = this.serviceFactory.getService(CONFIG_SERVICE)
+    configService.setHttpResourceExclusionList(excludedUrlParts)
   }
 }

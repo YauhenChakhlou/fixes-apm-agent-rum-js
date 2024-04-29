@@ -25,7 +25,7 @@
 
 import { getCurrentScript, setLabel, merge, extend, isUndefined } from './utils'
 import EventHandler from './event-handler'
-import { CONFIG_CHANGE, LOCAL_CONFIG_KEY } from './constants'
+import { CONFIG_CHANGE, LOCAL_CONFIG_KEY, PAGE_LOAD_DELAY } from './constants'
 
 function getConfigFromScript() {
   var script = getCurrentScript()
@@ -94,11 +94,21 @@ class Config {
       context: {},
       session: false,
       apmRequest: null,
-      sendCredentials: false
+      sendCredentials: false,
+      /**
+       * DPEO: Configuration
+       * Additional configuration properties added by DP RUM customization
+       */
+      customPageLoadDelay: PAGE_LOAD_DELAY, // non-default delay before stopping managed page-load transaction
+      excludeCrossRedirectTime: true,
+      excludeRequestHeaderName: 'rum-exclude-tracking' // exclude a Fetch(only) request from being included as span into current transaction
     }
 
     this.events = new EventHandler()
     this.filters = []
+
+    this.httpResourceExclusionList = []
+    this.httpResourceExclusionFilter = null
     /**
      * Packages that uses rum-core under the hood must override
      * the version via setVersion
@@ -286,6 +296,14 @@ class Config {
 
   observeEvent(name, fn) {
     return this.events.observe(name, fn)
+  }
+
+  setHttpResourceExclusionFilter(fn) {
+    this.httpResourceExclusionFilter = fn
+  }
+
+  setHttpResourceExclusionList(list) {
+    this.httpResourceExclusionList.push(...list)
   }
 }
 

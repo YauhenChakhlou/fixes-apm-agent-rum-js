@@ -101,6 +101,9 @@ declare module '@elastic/apm-rum' {
     eventsLimit?: number
     queueLimit?: number
     sendCredentials?: boolean
+    customPageLoadDelay?: number
+    excludeCrossRedirectTime?: boolean
+    excludeRequestHeaderName?: string
     apmRequest?: (requestParams: {
       xhr: XMLHttpRequest
       url: string
@@ -144,6 +147,8 @@ declare module '@elastic/apm-rum' {
     getCurrentTransaction(): Transaction | undefined
     captureError(error: Error | string): void
     addFilter(fn: FilterFn): void
+    setHttpResourceExclusionFilter(cb: HttpResourceFilter): void
+    setHttpResourceExclusionList(excludedUrlParts: Array<string>): void
   }
   const apmBase: ApmBase
   export default init
@@ -182,6 +187,7 @@ interface ServiceFactory {
   getService: (name: string) => any
 }
 
+type HttpResourceFilter = (url: string) => boolean
 type FilterFn = (payload: Payload) => Payload | boolean | void
 type Payload = { [key: string]: any }
 

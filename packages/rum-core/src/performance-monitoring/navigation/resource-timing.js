@@ -23,12 +23,18 @@
  *
  */
 
-import { stripQueryStringFromUrl } from '../../common/utils'
+import {
+  stripQueryStringFromUrl,
+  getTimeBeforeFetch,
+  shouldResourceBeExcludedFromTracking
+} from '../../common/utils'
 import { shouldCreateSpan } from './utils'
 import { RESOURCE_INITIATOR_TYPES } from '../../common/constants'
 import Span from '../span'
 
 function createResourceTimingSpan(resourceTimingEntry) {
+  const pageRedirectDuration = getTimeBeforeFetch()
+
   const { name, initiatorType, startTime, responseEnd } = resourceTimingEntry
   let kind = 'resource'
   if (initiatorType) {
@@ -37,8 +43,11 @@ function createResourceTimingSpan(resourceTimingEntry) {
   const spanName = stripQueryStringFromUrl(name)
   const span = new Span(spanName, kind)
 
-  span._start = startTime
-  span.end(responseEnd, { url: name, entry: resourceTimingEntry })
+  span._start = startTime - pageRedirectDuration
+  span.end(responseEnd - pageRedirectDuration, {
+    url: name,
+    entry: resourceTimingEntry
+  })
   return span
 }
 
@@ -59,7 +68,13 @@ function isIntakeAPIEndpoint(url) {
   return /intake\/v\d+\/rum\/events/.test(url)
 }
 
-function createResourceTimingSpans(entries, requestPatchTime, trStart, trEnd) {
+function createResourceTimingSpans(
+  entries,
+  requestPatchTime,
+  trStart,
+  trEnd,
+  configService
+) {
   const spans = []
   for (let i = 0; i < entries.length; i++) {
     const { initiatorType, name, startTime, responseEnd } = entries[i]
@@ -88,6 +103,11 @@ function createResourceTimingSpans(entries, requestPatchTime, trStart, trEnd) {
       (isIntakeAPIEndpoint(name) ||
         isCapturedByPatching(startTime, requestPatchTime))
     ) {
+      continue
+    }
+
+    // DPEO: LCP
+    if (shouldResourceBeExcludedFromTracking(name, configService)) {
       continue
     }
 

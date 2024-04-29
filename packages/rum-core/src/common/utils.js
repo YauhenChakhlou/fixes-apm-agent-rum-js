@@ -440,6 +440,139 @@ function isRedirectInfoAvailable(timing) {
   return timing.redirectStart > 0
 }
 
+/**
+ * DPEO: Redirect
+ * Possible redirect duration for the initial "hard" page load
+ */
+let timeBeforeFetch
+function getTimeBeforeFetch() {
+  if (timeBeforeFetch !== undefined) {
+    return timeBeforeFetch
+  }
+
+  timeBeforeFetch = PERF.timing.fetchStart - PERF.timing.navigationStart
+  // Same-domain chain-of-redirects was found
+  if (PERF.timing.redirectStart > 0) {
+    // only for debug purpose
+    timeBeforeFetch = PERF.timing.redirectEnd - PERF.timing.redirectStart
+    // setting timeBeforeFetch to 0, as it is currently for cross-domain case only
+    timeBeforeFetch = 0
+  }
+  return timeBeforeFetch
+}
+
+function getAllXhrSpans(spans) {
+  return spans.filter(span => {
+    return String(span.type).indexOf('external') !== -1
+  })
+}
+
+function removeTimeFromSpans(spans, timeToRemove = 0) {
+  spans.forEach(span => {
+    span._start = span._start - timeToRemove
+    span._end = span._end - timeToRemove
+  })
+}
+
+// Code copied from TIME, possibly was:
+// https://github.com/thiagodp/get-xpath/blob/master/src/index.ts
+function getElementXPath(element) {
+  let currentNode = element
+  if (!(currentNode === null) && currentNode.id) {
+    return `//*[@id="${currentNode.id}"]`
+  }
+
+  const parts = []
+  while (
+    !(currentNode === null) &&
+    Node.ELEMENT_NODE === currentNode.nodeType
+  ) {
+    let numberOfPreviousSiblings = 0
+    let hasNextSiblings = false
+    let sibling = currentNode.previousSibling
+
+    while (!(sibling === null)) {
+      if (
+        sibling.nodeType !== Node.DOCUMENT_TYPE_NODE && // For example, both `currentNode` and `sibling` are `div`-s.
+        sibling.nodeName === currentNode.nodeName
+      ) {
+        numberOfPreviousSiblings += 1
+      }
+      sibling = sibling.previousSibling
+    }
+
+    sibling = currentNode.nextSibling
+    while (!(sibling === null)) {
+      if (sibling.nodeName === currentNode.nodeName) {
+        hasNextSiblings = true
+        break
+      }
+      sibling = sibling.nextSibling
+    }
+
+    const prefix = !(currentNode.prefix === null)
+      ? `${currentNode.prefix}:`
+      : ''
+    const nth =
+      numberOfPreviousSiblings > 0 || hasNextSiblings
+        ? `[${numberOfPreviousSiblings + 1}]`
+        : ''
+
+    parts.push(prefix + currentNode.localName + nth)
+    currentNode = currentNode.parentNode
+  }
+
+  if (parts.length) {
+    return `/${parts.reverse().join('/')}`
+  }
+
+  return ''
+}
+
+function shouldResourceBeExcludedFromTracking(url, configService) {
+  /**
+   * DPEO: LCP
+   * Exclude specific http(api) requests from being included in transaction as spans
+   * Requires either setting an exclusion list (by substrings), or setting
+   * a custom callback that should verify by itself, if the url should be excluded
+   */
+  const exclusionList = configService.httpResourceExclusionList
+  const resourceExclusionCallback = configService.httpResourceExclusionFilter
+  let isExcludedFromTracking = false
+
+  if (typeof resourceExclusionCallback === 'function') {
+    isExcludedFromTracking = !!resourceExclusionCallback(url)
+  } else {
+    isExcludedFromTracking = exclusionList.some(ex => url.includes(ex))
+  }
+
+  return isExcludedFromTracking
+}
+
+function addCloudflareHeadersToSpan(span, target, response) {
+  /**
+   * DPEO: RayId
+   * Add the Cf-Ray (actually, it is Cloudflare Ray id) header, if present,
+   * from the response to the current API-call span
+   */
+  let headerRayId
+  if (target instanceof XMLHttpRequest) {
+    // XMLHttpRequest
+    headerRayId = target.getResponseHeader('Cf-Ray')
+  } else if (response && response instanceof Response && response.headers) {
+    // Fetch API
+    headerRayId = response.headers.get('Cf-Ray')
+  }
+
+  if (headerRayId) {
+    span.addLabels({
+      'Cf-Ray': headerRayId
+    })
+  }
+
+  return span
+}
+
 export {
   extend,
   merge,
@@ -481,5 +614,11 @@ export {
   isPerfTypeSupported,
   isPerfInteractionCountSupported,
   isBeaconInspectionEnabled,
-  isRedirectInfoAvailable
+  isRedirectInfoAvailable,
+  getTimeBeforeFetch,
+  getAllXhrSpans,
+  removeTimeFromSpans,
+  getElementXPath,
+  shouldResourceBeExcludedFromTracking,
+  addCloudflareHeadersToSpan
 }

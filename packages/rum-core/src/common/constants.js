@@ -147,6 +147,7 @@ const LARGEST_CONTENTFUL_PAINT = 'largest-contentful-paint'
 const FIRST_INPUT = 'first-input'
 const LAYOUT_SHIFT = 'layout-shift'
 const EVENT = 'event'
+const ELEMENT_TIMING = 'element'
 
 /**
  * Event types sent to APM Server on the queue
@@ -237,6 +238,7 @@ export {
   TRUNCATED_TYPE,
   FIRST_INPUT,
   LAYOUT_SHIFT,
+  ELEMENT_TIMING,
   EVENT,
   OUTCOME_SUCCESS,
   OUTCOME_FAILURE,

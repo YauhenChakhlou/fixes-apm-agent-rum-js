@@ -34,9 +34,12 @@ import {
   noop,
   PERF,
   isPerfTypeSupported,
-  isRedirectInfoAvailable
+  isRedirectInfoAvailable,
+  getTimeBeforeFetch,
+  getElementXPath
 } from '../../common/utils'
 import Span from '../span'
+import { __DEV__ } from '../../state'
 
 export const metrics = {
   fid: 0,
@@ -66,6 +69,7 @@ const LONG_TASK_THRESHOLD = 50
  */
 export function createLongTaskSpans(longtasks, agg) {
   const spans = []
+  const pageRedirectDuration = getTimeBeforeFetch()
 
   for (let i = 0; i < longtasks.length; i++) {
     /**
@@ -74,8 +78,10 @@ export function createLongTaskSpans(longtasks, agg) {
      * https://w3c.github.io/longtasks/#sec-PerformanceLongTaskTiming
      */
     const { name, startTime, duration, attribution } = longtasks[i]
-    const end = startTime + duration
-    const span = new Span(`Longtask(${name})`, LONG_TASK, { startTime })
+    const end = startTime + duration - pageRedirectDuration
+    const span = new Span(`Longtask(${name})`, LONG_TASK, {
+      startTime: startTime - pageRedirectDuration
+    })
     agg.count++
     agg.duration += duration
     agg.max = Math.max(duration, agg.max)
@@ -125,13 +131,16 @@ export function createLongTaskSpans(longtasks, agg) {
 }
 
 export function createFirstInputDelaySpan(fidEntries) {
+  const pageRedirectDuration = getTimeBeforeFetch()
   let firstInput = fidEntries[0]
 
   if (firstInput) {
     const { startTime, processingStart } = firstInput
-
-    const span = new Span('First Input Delay', FIRST_INPUT, { startTime })
-    span.end(processingStart)
+    // DPEO: Redirect
+    const span = new Span('First Input Delay', FIRST_INPUT, {
+      startTime: startTime - pageRedirectDuration
+    })
+    span.end(processingStart - pageRedirectDuration)
     return span
   }
 }
@@ -149,13 +158,15 @@ export function createTotalBlockingTimeSpan(tbtObject) {
  * Calculate Total Blocking Time (TBT) from long tasks
  */
 export function calculateTotalBlockingTime(longtaskEntries) {
+  const pageRedirectDuration = getTimeBeforeFetch()
+
   longtaskEntries.forEach(entry => {
     const { name, startTime, duration } = entry
     /**
      * FCP is picked as the lower bound because there is little risk of user input happening
      * before FCP and it will not harm user experience.
      */
-    if (startTime < metrics.fcp) {
+    if (startTime - pageRedirectDuration < metrics.fcp) {
       return
     }
     /**
@@ -170,7 +181,10 @@ export function calculateTotalBlockingTime(longtaskEntries) {
      * Calcualte the start time of the first long task so we can add it
      * as span start
      */
-    metrics.tbt.start = Math.min(metrics.tbt.start, startTime)
+    metrics.tbt.start = Math.min(
+      metrics.tbt.start,
+      startTime - pageRedirectDuration
+    )
 
     /**
      * Theoretically blocking time would always be greater than 0 as Long tasks are
@@ -222,6 +236,8 @@ export function calculateCumulativeLayoutShift(clsEntries) {
  * }
  */
 export function captureObserverEntries(list, { isHardNavigation, trStart }) {
+  const pageRedirectDuration = getTimeBeforeFetch()
+
   const longtaskEntries = list.getEntriesByType(LONG_TASK).filter(entry => {
     return entry.startTime >= trStart
   })
@@ -256,9 +272,60 @@ export function captureObserverEntries(list, { isHardNavigation, trStart }) {
      * `renderTime` will not be available for Image element and for the element
      * that is loaded cross-origin without the `Timing-Allow-Origin` header.
      */
-    const lcp = parseInt(lastLcpEntry.startTime)
-    metrics.lcp = lcp
-    result.marks.largestContentfulPaint = lcp
+    const lcp =
+      parseInt(lastLcpEntry.startTime) - parseInt(pageRedirectDuration)
+
+    /**
+     * DPEO: LCP
+     * Only save native LCP API entries until the first
+     * ElementTiming custom element entry has been received
+     */
+    if (!metrics.elemTimingLcp) {
+      metrics.lcp = lcp
+      result.marks.largestContentfulPaint = lcp
+
+      if (__DEV__) {
+        // console.log(`LCP API entry received: updating LCP metric to ${lcp}ms`)
+      }
+    } else {
+      if (__DEV__) {
+        // console.log(`LCP entry discarded, as ElementTiming entry exists`)
+      }
+    }
+
+    metrics.nativeBrowserLcp = lcp
+    metrics.nativeBrowserLcpElementXPath = getElementXPath(lastLcpEntry.element)
+  }
+
+  /**
+   * DPEO: LCP
+   * Element Timing API
+   * Using the same approach as above - as for the LCP calculation
+   */
+  const elementTimingEntries = list.getEntriesByType('element')
+
+  const lastElementTimingEntry =
+    elementTimingEntries[elementTimingEntries.length - 1]
+  if (lastElementTimingEntry) {
+    const elemTimingLcp =
+      parseInt(lastElementTimingEntry.startTime) -
+      parseInt(pageRedirectDuration)
+    if (elemTimingLcp >= metrics.lcp) {
+      metrics.lcp = elemTimingLcp
+      result.marks.largestContentfulPaint = elemTimingLcp
+
+      // if (__DEV__) {
+      //   console.log(
+      //     `ElementTiming API entry received: updating LCP metric to ${elemTimingLcp}ms`
+      //   )
+      //   console.log(lastElementTimingEntry)
+      // }
+    }
+
+    metrics.elemTimingLcp = elemTimingLcp
+    metrics.customLcpElementXPath = getElementXPath(
+      lastElementTimingEntry.element
+    )
   }
 
   /**
@@ -272,7 +339,8 @@ export function captureObserverEntries(list, { isHardNavigation, trStart }) {
    * To avoid capturing the unload event handler effect
    * as part of the page-load transaction duration
    */
-  let unloadDiff = timing.fetchStart - timing.navigationStart
+  let unloadDiff =
+    timing.fetchStart - timing.navigationStart - pageRedirectDuration
   if (isRedirectInfoAvailable(timing)) {
     // this makes sure the FCP startTime includes the redirect time
     // otherwise the mark would not show up properly in the UI waterfall
@@ -281,8 +349,9 @@ export function captureObserverEntries(list, { isHardNavigation, trStart }) {
 
   const fcpEntry = list.getEntriesByName(FIRST_CONTENTFUL_PAINT)[0]
   if (fcpEntry) {
+    const fcpWithoutRedirect = fcpEntry.startTime - pageRedirectDuration
     const fcp = parseInt(
-      unloadDiff >= 0 ? fcpEntry.startTime - unloadDiff : fcpEntry.startTime
+      unloadDiff >= 0 ? fcpWithoutRedirect - unloadDiff : fcpWithoutRedirect
     )
     metrics.fcp = fcp
     result.marks.firstContentfulPaint = fcp
