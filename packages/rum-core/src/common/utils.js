@@ -555,18 +555,32 @@ function addCloudflareHeadersToSpan(span, target, response) {
    * Add the Cf-Ray (actually, it is Cloudflare Ray id) header, if present,
    * from the response to the current API-call span
    */
-  let headerRayId
+  let headerRayId, headerCacheControl, headerCfCacheStatus
   if (target instanceof XMLHttpRequest) {
     // XMLHttpRequest
     headerRayId = target.getResponseHeader('Cf-Ray')
+    headerCacheControl = target.getResponseHeader('Cache-Control')
+    headerCfCacheStatus = target.getResponseHeader('Cf-Cache-Status')
   } else if (response && response instanceof Response && response.headers) {
     // Fetch API
     headerRayId = response.headers.get('Cf-Ray')
+    headerCacheControl = response.headers.get('Cache-Control')
+    headerCfCacheStatus = response.headers.get('Cf-Cache-Status')
   }
 
   if (headerRayId) {
     span.addLabels({
       'Cf-Ray': headerRayId
+    })
+  }
+  if (headerCacheControl) {
+    span.addLabels({
+      'Cache-Control': headerCacheControl
+    })
+  }
+  if (headerCfCacheStatus) {
+    span.addLabels({
+      'Cf-Cache-Status': headerCfCacheStatus
     })
   }
 
